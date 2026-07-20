@@ -1,0 +1,6 @@
+[core]
+    remote = minio
+['remote "minio"']
+    url = s3://kiselevanastya/mfdp
+    endpointurl = http://85.239.47.84:9000
+    use_ssl = false
