@@ -1,0 +1,3 @@
+['remote "minio"']
+    access_key_id = <логин от MinIO>
+    secret_access_key = <пароль от MinIO>

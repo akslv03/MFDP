@@ -1,0 +1,155 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    image: mri-segmentation-api:latest
+    container_name: mri-segmentation-api
+    restart: unless-stopped
+    platform: linux/arm64
+    env_file:
+      - ./app/.env
+    environment:
+      - UPLOAD_DIR=/svc/app/uploads
+      - STREAMLIT_PUBLIC_URL=http://localhost:8501
+      - QDRANT_URL=http://qdrant:6333
+      - KAGGLE_3M_PATH=/data/kaggle_3m
+    volumes:
+      - ./app:/svc/app
+      - ./kaggle_3m:/data/kaggle_3m:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      - database
+      - rabbitmq
+      - qdrant
+    networks:
+      - mri-segmentation-network
+    healthcheck:
+      test: ["CMD", "uv", "run", "--project", "/svc", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  ml_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    image: mri-segmentation-ml-worker:latest
+    restart: unless-stopped
+    platform: linux/arm64
+    env_file:
+      - ./app/.env
+    volumes:
+      - ./app:/svc/app
+      - ./ml_worker:/svc/ml_worker
+      - ./kaggle_3m:/data/kaggle_3m:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      database:
+        condition: service_started
+      qdrant:
+        condition: service_started
+    environment:
+      - PYTHONPATH=/svc/ml_worker:/svc/app
+      - UPLOAD_DIR=/svc/app/uploads
+      - QDRANT_URL=http://qdrant:6333
+      - KAGGLE_3M_PATH=/data/kaggle_3m
+    networks:
+      - mri-segmentation-network
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ui
+    image: mri-segmentation-ui:latest
+    container_name: mri-segmentation-ui
+    restart: unless-stopped
+    platform: linux/arm64
+    environment:
+      - API_BASE_URL=http://app:8080
+    volumes:
+      - ./webview:/svc/webview
+    ports:
+      - "8501:8501"
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - mri-segmentation-network
+
+  web-proxy:
+    image: nginx:latest
+    container_name: mri-segmentation-nginx
+    restart: unless-stopped
+    platform: linux/arm64
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - streamlit
+      - app
+    volumes:
+      - ./web-proxy/nginx.conf:/etc/nginx/nginx.conf
+    networks:
+      - mri-segmentation-network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: mri-segmentation-rabbitmq
+    restart: on-failure
+    platform: linux/arm64
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - mri-segmentation-network
+
+  database:
+    image: postgres:16-alpine
+    container_name: mri-segmentation-postgres
+    restart: unless-stopped
+    platform: linux/arm64
+    env_file:
+      - ./.env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - mri-segmentation-network
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.5
+    container_name: mri-segmentation-qdrant
+    restart: unless-stopped
+    platform: linux/arm64
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - mri-segmentation-network
+
+networks:
+  mri-segmentation-network:
+    name: mri-segmentation-network
+    driver: bridge
+
+volumes:
+  rabbitmq_data:
+  postgres_data:
+  qdrant_data:
