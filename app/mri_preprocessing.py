@@ -9,7 +9,7 @@ def _resize_slice(slice_hwc: np.ndarray, size: int) -> np.ndarray:
     channels = []
     for c in range(slice_hwc.shape[-1]):
         img = Image.fromarray(slice_hwc[..., c].astype(np.float32), mode="F")
-        img = img.resize((size, size), resample=Image.BILINEAR)
+        img = img.resize((size, size), resample=Image.BICUBIC)
         channels.append(np.asarray(img, dtype=np.float32))
     return np.stack(channels, axis=-1)
 

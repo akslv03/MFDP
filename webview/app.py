@@ -11,16 +11,21 @@ from urllib.parse import unquote
 import extra_streamlit_components as stx
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8080").rstrip("/")
+BROWSER_API_BASE_URL = os.getenv("BROWSER_API_BASE_URL", "http://localhost:8080").rstrip("/")
 DEFAULT_MODEL_ID = int(os.getenv("DEFAULT_ML_MODEL_ID", "1"))
 PASSWORD_MIN_LENGTH = 4
 EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 AUTH_COOKIE_NAME = os.getenv("STREAMLIT_AUTH_COOKIE", "mri_access_token")
-AUTH_META_COOKIE = "mri_auth_meta"
 TASK_COOKIE_NAME = "mri_last_task_id"
-AUTH_COOKIE_MAX_AGE = 3600
+CASE_COOKIE_NAME = "mri_open_case"
+LOGOUT_COOKIE_NAME = "mri_logged_out"
+AUTH_COOKIE_MAX_AGE = 60 * 60 * 12
 TASK_COOKIE_MAX_AGE = 60 * 60 * 24 * 14
+LOGOUT_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
+VIEW_QUERY_KEYS = ("task", "case", "score")
 
 
 def api_url(path: str) -> str:
@@ -38,7 +43,7 @@ def init_state() -> None:
         "selected_case_score": None,
         "_cookie_bootstrapped": False,
         "_logged_out": False,
-        "_task_cookie_restored": False,
+        "_view_restored": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -53,7 +58,7 @@ def bootstrap_cookies(cookie_manager: stx.CookieManager) -> None:
     cookie_manager.get_all()
     if not st.session_state._cookie_bootstrapped:
         st.session_state._cookie_bootstrapped = True
-        time.sleep(0.15)
+        time.sleep(0.25)
         st.rerun()
 
 
@@ -61,75 +66,84 @@ def _cookie_expires(max_age: int) -> datetime:
     return datetime.now() + timedelta(seconds=max_age)
 
 
-def set_auth_cookie(cookie_manager: stx.CookieManager, token: str) -> None:
-    expires = _cookie_expires(AUTH_COOKIE_MAX_AGE)
+def _cookie_set(
+    cookie_manager: stx.CookieManager,
+    name: str,
+    value: str,
+    *,
+    expires_at: datetime,
+    max_age: int,
+    key: str,
+) -> None:
     cookie_manager.set(
+        name,
+        value,
+        expires_at=expires_at,
+        max_age=max_age,
+        same_site="lax",
+        key=key,
+    )
+
+
+def _cookie_delete(cookie_manager: stx.CookieManager, name: str, *, key: str) -> None:
+    try:
+        cookie_manager.delete(name, key=key)
+    except Exception:
+        pass
+
+
+def _expire_cookie(cookie_manager: stx.CookieManager, name: str, *, key: str) -> None:
+    past = datetime.now() - timedelta(days=1)
+    try:
+        cookie_manager.set(
+            name,
+            "",
+            expires_at=past,
+            max_age=0,
+            same_site="lax",
+            key=key,
+        )
+    except Exception:
+        pass
+
+
+def set_auth_cookie(cookie_manager: stx.CookieManager, token: str) -> None:
+    _cookie_delete(cookie_manager, LOGOUT_COOKIE_NAME, key="del_logout_flag")
+    _expire_cookie(cookie_manager, LOGOUT_COOKIE_NAME, key="expire_logout_flag")
+    _cookie_set(
+        cookie_manager,
         AUTH_COOKIE_NAME,
         token,
-        expires_at=expires,
+        expires_at=_cookie_expires(AUTH_COOKIE_MAX_AGE),
         max_age=AUTH_COOKIE_MAX_AGE,
-        same_site="lax",
         key="set_auth_token",
     )
-    meta = {
-        "user_id": st.session_state.user_id,
-        "username": st.session_state.username,
-        "email": st.session_state.email,
-    }
-    cookie_manager.set(
-        AUTH_META_COOKIE,
-        json.dumps(meta, ensure_ascii=False),
-        expires_at=expires,
-        max_age=AUTH_COOKIE_MAX_AGE,
-        same_site="lax",
-        key="set_auth_meta",
-    )
+    time.sleep(0.25)
 
 
 def clear_auth_cookie(cookie_manager: stx.CookieManager) -> None:
-    cookie_manager.delete(AUTH_COOKIE_NAME, key="del_auth_token")
-    cookie_manager.delete(AUTH_META_COOKIE, key="del_auth_meta")
-    past = datetime.now() - timedelta(days=1)
-    cookie_manager.set(
-        AUTH_COOKIE_NAME,
-        "",
-        expires_at=past,
-        max_age=0,
-        same_site="lax",
-        key="expire_auth_token",
-    )
-    cookie_manager.set(
-        AUTH_META_COOKIE,
-        "",
-        expires_at=past,
-        max_age=0,
-        same_site="lax",
-        key="expire_auth_meta",
+    _cookie_delete(cookie_manager, AUTH_COOKIE_NAME, key="del_auth_token")
+    _expire_cookie(cookie_manager, AUTH_COOKIE_NAME, key="expire_auth_token")
+    _cookie_delete(cookie_manager, "mri_auth_meta", key="del_legacy_meta")
+    _expire_cookie(cookie_manager, "mri_auth_meta", key="expire_legacy_meta")
+
+
+def set_logout_cookie(cookie_manager: stx.CookieManager) -> None:
+    _cookie_set(
+        cookie_manager,
+        LOGOUT_COOKIE_NAME,
+        "1",
+        expires_at=_cookie_expires(LOGOUT_COOKIE_MAX_AGE),
+        max_age=LOGOUT_COOKIE_MAX_AGE,
+        key="set_logout_flag",
     )
 
 
-def set_task_cookie(cookie_manager: stx.CookieManager, task_id: int) -> None:
-    cookie_manager.set(
-        TASK_COOKIE_NAME,
-        str(task_id),
-        expires_at=_cookie_expires(TASK_COOKIE_MAX_AGE),
-        max_age=TASK_COOKIE_MAX_AGE,
-        same_site="lax",
-        key="set_last_task",
-    )
-
-
-def clear_task_cookie(cookie_manager: stx.CookieManager) -> None:
-    cookie_manager.delete(TASK_COOKIE_NAME, key="del_last_task")
-    past = datetime.now() - timedelta(days=1)
-    cookie_manager.set(
-        TASK_COOKIE_NAME,
-        "",
-        expires_at=past,
-        max_age=0,
-        same_site="lax",
-        key="expire_last_task",
-    )
+def is_logout_cookie_set(cookie_manager: stx.CookieManager) -> bool:
+    raw = cookie_manager.get(LOGOUT_COOKIE_NAME)
+    if raw is None:
+        return False
+    return str(raw).strip() in {"1", "true", "True"}
 
 
 def read_auth_cookie(cookie_manager: stx.CookieManager) -> Optional[str]:
@@ -137,23 +151,107 @@ def read_auth_cookie(cookie_manager: stx.CookieManager) -> Optional[str]:
     if not raw:
         return None
     token = unquote(str(raw)).strip()
+    if not token:
+        return None
     if token.lower().startswith("bearer "):
         token = token[7:].strip()
     return token or None
+
+
+def set_task_cookie(cookie_manager: stx.CookieManager, task_id: int) -> None:
+    user_id = st.session_state.get("user_id")
+    if not user_id:
+        return
+    _cookie_set(
+        cookie_manager,
+        TASK_COOKIE_NAME,
+        f"{int(user_id)}:{int(task_id)}",
+        expires_at=_cookie_expires(TASK_COOKIE_MAX_AGE),
+        max_age=TASK_COOKIE_MAX_AGE,
+        key="set_last_task",
+    )
+
+
+def clear_task_cookie(cookie_manager: stx.CookieManager) -> None:
+    _cookie_delete(cookie_manager, TASK_COOKIE_NAME, key="del_last_task")
+    _expire_cookie(cookie_manager, TASK_COOKIE_NAME, key="expire_last_task")
 
 
 def read_task_cookie(cookie_manager: stx.CookieManager) -> Optional[int]:
     raw = cookie_manager.get(TASK_COOKIE_NAME)
     if not raw:
         return None
+    text = unquote(str(raw)).strip()
+    if not text:
+        return None
+    user_id = st.session_state.get("user_id")
+    if user_id is None:
+        return None
+    if ":" in text:
+        owner_raw, task_raw = text.split(":", 1)
+        try:
+            if int(owner_raw) != int(user_id):
+                return None
+            return int(task_raw)
+        except (TypeError, ValueError):
+            return None
     try:
-        return int(str(raw).strip())
+        return int(text)
     except (TypeError, ValueError):
         return None
 
 
+def clear_case_cookie(cookie_manager: stx.CookieManager) -> None:
+    _cookie_delete(cookie_manager, CASE_COOKIE_NAME, key="del_open_case")
+    _expire_cookie(cookie_manager, CASE_COOKIE_NAME, key="expire_open_case")
+
+
+def clear_view_query_params() -> None:
+    next_params = {k: v for k, v in st.query_params.items() if k not in VIEW_QUERY_KEYS}
+    if dict(st.query_params) == next_params:
+        return
+    if hasattr(st.query_params, "from_dict"):
+        st.query_params.from_dict(next_params)
+    else:
+        for key in VIEW_QUERY_KEYS:
+            if key in st.query_params:
+                del st.query_params[key]
+
+
+def persist_view_query_params() -> None:
+    next_params = {k: v for k, v in st.query_params.items() if k not in VIEW_QUERY_KEYS}
+    if st.session_state.last_task_id is not None:
+        next_params["task"] = str(int(st.session_state.last_task_id))
+    current = dict(st.query_params)
+    if current == next_params:
+        return
+    if hasattr(st.query_params, "from_dict"):
+        st.query_params.from_dict(next_params)
+    else:
+        st.query_params.clear()
+        st.query_params.update(next_params)
+
+
+def apply_view_from_url() -> None:
+    """Поднимается task из URL после обновления страницы."""
+    task_raw = st.query_params.get("task")
+    if task_raw and not st.session_state.last_task_id:
+        try:
+            st.session_state.last_task_id = int(str(task_raw))
+        except (TypeError, ValueError):
+            pass
+
+
+def reset_workspace_view() -> None:
+    """Чистая форма нового пациента (без смены пользователя)."""
+    st.session_state.last_task_id = None
+    st.session_state.selected_patient_id = None
+    st.session_state.selected_case_score = None
+
+
 def clear_session(cookie_manager: stx.CookieManager) -> None:
     st.session_state._logged_out = True
+    st.session_state._view_restored = False
     for key in (
         "access_token",
         "user_id",
@@ -164,15 +262,19 @@ def clear_session(cookie_manager: stx.CookieManager) -> None:
         "selected_case_score",
     ):
         st.session_state[key] = None
+    clear_view_query_params()
     clear_auth_cookie(cookie_manager)
     clear_task_cookie(cookie_manager)
+    clear_case_cookie(cookie_manager)
+    set_logout_cookie(cookie_manager)
+    time.sleep(0.35)
 
 
 def start_new_patient(cookie_manager: stx.CookieManager) -> None:
-    st.session_state.last_task_id = None
-    st.session_state.selected_patient_id = None
-    st.session_state.selected_case_score = None
+    reset_workspace_view()
     clear_task_cookie(cookie_manager)
+    clear_case_cookie(cookie_manager)
+    persist_view_query_params()
 
 
 def remember_task(cookie_manager: stx.CookieManager, task_id: int) -> None:
@@ -180,10 +282,31 @@ def remember_task(cookie_manager: stx.CookieManager, task_id: int) -> None:
     st.session_state.selected_patient_id = None
     st.session_state.selected_case_score = None
     set_task_cookie(cookie_manager, task_id)
+    clear_case_cookie(cookie_manager)
+    persist_view_query_params()
+
+
+def open_historical_case(
+    cookie_manager: stx.CookieManager,
+    patient_id: str,
+    score: Any = None,
+) -> None:
+    st.session_state.selected_patient_id = patient_id
+    st.session_state.selected_case_score = score
+
+
+def close_historical_case(cookie_manager: Optional[stx.CookieManager] = None) -> None:
+    st.session_state.selected_patient_id = None
+    st.session_state.selected_case_score = None
+    if cookie_manager is not None:
+        clear_case_cookie(cookie_manager)
 
 
 def restore_session_from_cookie(cookie_manager: stx.CookieManager) -> None:
     if st.session_state.get("_logged_out"):
+        return
+    if is_logout_cookie_set(cookie_manager):
+        clear_auth_cookie(cookie_manager)
         return
     if st.session_state.access_token and st.session_state.user_id:
         return
@@ -213,15 +336,44 @@ def restore_session_from_cookie(cookie_manager: stx.CookieManager) -> None:
     st.session_state._logged_out = False
 
 
-def restore_task_from_cookie(cookie_manager: stx.CookieManager) -> None:
-    if st.session_state.get("_task_cookie_restored"):
+def task_belongs_to_current_user(task_id: int) -> bool:
+    try:
+        response = requests.get(
+            api_url(f"/api/predict/{task_id}"),
+            headers=auth_headers(),
+            timeout=30,
+        )
+    except requests.RequestException:
+        return False
+    return response.status_code == 200
+
+
+def restore_workspace_view(cookie_manager: stx.CookieManager) -> None:
+    if st.session_state.get("_view_restored"):
         return
-    st.session_state._task_cookie_restored = True
-    if st.session_state.last_task_id:
-        return
-    task_id = read_task_cookie(cookie_manager)
-    if task_id:
-        st.session_state.last_task_id = task_id
+    st.session_state._view_restored = True
+
+    apply_view_from_url()
+    clear_case_cookie(cookie_manager)
+    st.session_state.selected_patient_id = None
+    st.session_state.selected_case_score = None
+    if "case" in st.query_params or "score" in st.query_params:
+        persist_view_query_params()
+
+    if not st.session_state.last_task_id:
+        task_id = read_task_cookie(cookie_manager)
+        if task_id:
+            if task_belongs_to_current_user(task_id):
+                st.session_state.last_task_id = task_id
+            else:
+                clear_task_cookie(cookie_manager)
+
+    if st.session_state.last_task_id and not task_belongs_to_current_user(
+        int(st.session_state.last_task_id)
+    ):
+        st.session_state.last_task_id = None
+        clear_view_query_params()
+        clear_task_cookie(cookie_manager)
 
 
 def format_api_detail(detail: Any) -> str:
@@ -297,6 +449,10 @@ def login(email: str, password: str, cookie_manager: stx.CookieManager) -> None:
     st.session_state.username = payload["username"]
     st.session_state.email = payload["email"]
     st.session_state._logged_out = False
+    st.session_state._view_restored = True
+    reset_workspace_view()
+    clear_view_query_params()
+    clear_task_cookie(cookie_manager)
     if st.session_state.access_token:
         set_auth_cookie(cookie_manager, st.session_state.access_token)
 
@@ -408,6 +564,197 @@ def fetch_case_slice(
     return response.content
 
 
+def render_live_slice_viewer(
+    patient_id: str,
+    slices: List[Dict[str, Any]],
+    *,
+    show_mask: bool,
+) -> None:
+    if not slices:
+        return
+
+    token = st.session_state.get("access_token") or ""
+    files = [str(item.get("filename") or "") for item in slices]
+    has_masks = [bool(item.get("has_mask")) for item in slices]
+    metas = [
+        (
+            f"Файл: {item.get('filename')} · номер среза: {item.get('slice_number')} · "
+            f"маска: {'есть' if item.get('has_mask') else 'нет'}"
+        )
+        for item in slices
+    ]
+    last = len(slices) - 1
+    html = f"""
+    <style>
+      :root {{ color-scheme: light dark; }}
+      #root, #slice-label {{
+        color: light-dark(#31333F, #FAFAFA);
+        font-family: "Source Sans Pro", sans-serif;
+      }}
+      #slice-meta, #plain-caption, #mask-caption, #slice-status {{
+        color: light-dark(rgba(49, 51, 63, 0.78), rgba(250, 250, 250, 0.78));
+      }}
+    </style>
+    <div id="root" style="box-sizing: border-box;">
+      <div style="margin-bottom: 0.5rem;">
+        <label id="slice-label" for="slice-slider"><b>Срез</b>:
+          <span id="slice-idx">0</span> / {last}
+        </label>
+        <input
+          id="slice-slider"
+          type="range"
+          min="0"
+          max="{last}"
+          value="0"
+          style="width: 100%; margin-top: 0.35rem;"
+        />
+      </div>
+      <div id="slice-meta" style="margin-bottom: 0.35rem; font-size: 0.95rem;"></div>
+      <div id="slice-status" style="margin-bottom: 0.75rem; font-size: 0.85rem;">Загрузка среза…</div>
+      <div style="display: flex; gap: 12px; align-items: flex-start;">
+        <div style="flex: 1; min-width: 0;">
+          <div id="plain-caption" style="font-size: 0.85rem; margin-bottom: 0.35rem;">МРТ</div>
+          <img
+            id="slice-plain"
+            style="display: block; width: 100%; max-height: 760px; height: auto; object-fit: contain; background: #111;"
+          />
+        </div>
+        <div id="mask-wrap" style="flex: 1; min-width: 0; display: none;">
+          <div id="mask-caption" style="font-size: 0.85rem; margin-bottom: 0.35rem;">МРТ + маска</div>
+          <img
+            id="slice-mask"
+            style="display: block; width: 100%; max-height: 760px; height: auto; object-fit: contain; background: #111;"
+          />
+        </div>
+      </div>
+    </div>
+    <script>
+      const apiBase = {json.dumps(BROWSER_API_BASE_URL)};
+      const patientId = {json.dumps(patient_id)};
+      const files = {json.dumps(files)};
+      const hasMasks = {json.dumps(has_masks)};
+      const metas = {json.dumps(metas)};
+      const showMask = {json.dumps(bool(show_mask))};
+      const token = {json.dumps(token)};
+      const cache = {{ plain: {{}}, mask: {{}} }};
+      const inflight = {{ plain: {{}}, mask: {{}} }};
+      const slider = document.getElementById("slice-slider");
+      const idxEl = document.getElementById("slice-idx");
+      const metaEl = document.getElementById("slice-meta");
+      const statusEl = document.getElementById("slice-status");
+      const plainEl = document.getElementById("slice-plain");
+      const maskEl = document.getElementById("slice-mask");
+      const maskWrap = document.getElementById("mask-wrap");
+      let reqSeq = 0;
+
+      function syncColorScheme() {{
+        let scheme = "dark";
+        try {{
+          const parentHtml = window.parent.document.documentElement;
+          const parentBody = window.parent.document.body;
+          const app = window.parent.document.querySelector('[data-testid="stApp"]');
+          const attr =
+            parentHtml.getAttribute("data-theme") ||
+            parentBody.getAttribute("data-theme") ||
+            parentHtml.getAttribute("data-bs-theme");
+          if (attr === "light" || attr === "dark") {{
+            scheme = attr;
+          }} else if (app) {{
+            const bg = window.parent.getComputedStyle(app).backgroundColor || "";
+            const m = bg.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+            if (m) {{
+              const lum = (0.2126 * Number(m[1]) + 0.7152 * Number(m[2]) + 0.0722 * Number(m[3])) / 255;
+              scheme = lum < 0.5 ? "dark" : "light";
+            }}
+          }}
+          const parentScheme = window.parent.getComputedStyle(parentHtml).colorScheme;
+          if (parentScheme === "light" || parentScheme === "dark") {{
+            scheme = parentScheme;
+          }}
+        }} catch (err) {{
+          scheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }}
+        document.documentElement.style.colorScheme = scheme;
+        document.body.style.colorScheme = scheme;
+      }}
+
+      function sliceUrl(i, withMask) {{
+        const q = withMask ? "true" : "false";
+        return (
+          apiBase +
+          "/api/cases/" + encodeURIComponent(patientId) +
+          "/slices/" + encodeURIComponent(files[i]) +
+          "?with_mask=" + q
+        );
+      }}
+
+      function fetchSlice(i, withMask) {{
+        const bucket = withMask ? "mask" : "plain";
+        if (cache[bucket][i]) return Promise.resolve(cache[bucket][i]);
+        if (inflight[bucket][i]) return inflight[bucket][i];
+        const p = fetch(sliceUrl(i, withMask), {{
+          headers: {{ Authorization: "Bearer " + token }}
+        }}).then(function (r) {{
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.blob();
+        }}).then(function (blob) {{
+          const url = URL.createObjectURL(blob);
+          cache[bucket][i] = url;
+          delete inflight[bucket][i];
+          return url;
+        }}).catch(function (err) {{
+          delete inflight[bucket][i];
+          throw err;
+        }});
+        inflight[bucket][i] = p;
+        return p;
+      }}
+
+      function prefetchAround(i) {{
+        [i - 1, i + 1, i + 2].forEach(function (j) {{
+          if (j < 0 || j >= files.length) return;
+          fetchSlice(j, false).catch(function () {{}});
+          if (showMask && hasMasks[j]) fetchSlice(j, true).catch(function () {{}});
+        }});
+      }}
+
+      async function updateSlice(i) {{
+        const seq = ++reqSeq;
+        idxEl.textContent = String(i);
+        metaEl.textContent = metas[i] || "";
+        statusEl.textContent = "Загрузка среза…";
+        try {{
+          const plainUrl = await fetchSlice(i, false);
+          if (seq !== reqSeq) return;
+          plainEl.src = plainUrl;
+          if (showMask && hasMasks[i]) {{
+            const maskUrl = await fetchSlice(i, true);
+            if (seq !== reqSeq) return;
+            maskEl.src = maskUrl;
+            maskWrap.style.display = "block";
+          }} else {{
+            maskWrap.style.display = "none";
+            maskEl.removeAttribute("src");
+          }}
+          statusEl.textContent = "";
+          prefetchAround(i);
+        }} catch (err) {{
+          if (seq !== reqSeq) return;
+          statusEl.textContent = "Не удалось загрузить срез: " + (err && err.message ? err.message : err);
+        }}
+      }}
+
+      slider.addEventListener("input", function () {{
+        updateSlice(Number(slider.value));
+      }});
+      syncColorScheme();
+      updateSlice(Number(slider.value));
+      setTimeout(syncColorScheme, 50);
+    </script>
+    """
+    components.html(html, height=860, scrolling=False)
+
+
 def fetch_upload_image(path_or_name: Optional[str]) -> Optional[bytes]:
     if not path_or_name:
         return None
@@ -439,19 +786,8 @@ def pick_case_preview_filename(patient_id: str, preferred: Optional[str] = None)
     return pool[len(pool) // 2].get("filename")
 
 
-def parse_slice_gallery(raw: Any) -> list:
-    if not raw:
-        return []
-    if isinstance(raw, list):
-        return raw
-    try:
-        data = json.loads(raw)
-        return data if isinstance(data, list) else []
-    except (TypeError, json.JSONDecodeError):
-        return []
-
-
-def parse_similar_cases(raw: Any) -> list:
+def parse_json_list(raw: Any) -> list:
+    """Унифицированный парсер JSON-списка из строки или уже списка."""
     if not raw:
         return []
     if isinstance(raw, list):
@@ -546,8 +882,6 @@ def render_auth(cookie_manager: stx.CookieManager) -> None:
         if st.button("Войти", type="primary"):
             try:
                 login(email.strip(), password, cookie_manager)
-                st.success("Вход выполнен")
-                time.sleep(0.2)
                 st.rerun()
             except Exception as exc:
                 st.error(str(exc))
@@ -600,14 +934,13 @@ def render_history_sidebar(cookie_manager: stx.CookieManager) -> None:
         st.sidebar.caption(f"Возраст {age if age is not None else '—'}, пол {gender}")
 
 
-def render_case_detail() -> None:
+def render_case_detail(cookie_manager: stx.CookieManager) -> None:
     patient_id = st.session_state.selected_patient_id
     if not patient_id:
         return
 
     if st.button("← Назад", key="back_from_case"):
-        st.session_state.selected_patient_id = None
-        st.session_state.selected_case_score = None
+        close_historical_case(cookie_manager)
         st.rerun()
 
     st.title(f"Исторический случай `{patient_id}`")
@@ -626,23 +959,40 @@ def render_case_detail() -> None:
         st.warning("У пациента нет доступных срезов.")
         return
 
-    idx = st.slider("Срез", min_value=0, max_value=len(slices) - 1, value=0, key="case_slice_slider")
     show_mask = st.checkbox("Показать маску опухоли", value=True, key="case_show_mask")
-    current = slices[idx]
-    filename = current["filename"]
-    st.write(
-        f"Файл: `{filename}` · номер среза: {current.get('slice_number')} · "
-        f"маска: {'есть' if current.get('has_mask') else 'нет'}"
-    )
+    render_live_slice_viewer(patient_id, slices, show_mask=show_mask)
 
-    cols = st.columns(2)
-    plain = fetch_case_slice(patient_id, filename, with_mask=False)
-    if plain:
-        cols[0].image(plain, caption="МРТ", use_container_width=True)
-    if show_mask and current.get("has_mask"):
-        masked = fetch_case_slice(patient_id, filename, with_mask=True)
-        if masked:
-            cols[1].image(masked, caption="МРТ + маска", use_container_width=True)
+
+def _dismiss_case_dialog() -> None:
+    st.session_state.selected_patient_id = None
+    st.session_state.selected_case_score = None
+
+
+@st.dialog("Исторический случай", width="large", on_dismiss=_dismiss_case_dialog)
+def show_historical_case_dialog() -> None:
+    patient_id = st.session_state.get("selected_patient_id")
+    if not patient_id:
+        return
+    st.markdown(f"**Пациент** `{patient_id}`")
+    try:
+        detail = get_historical_case(str(patient_id))
+    except Exception as exc:
+        st.error(str(exc))
+        return
+
+    clinical = detail.get("clinical") or {}
+    slices = detail.get("slices") or []
+    render_clinical_block(clinical, score=st.session_state.selected_case_score)
+    st.caption(f"Срезов в исследовании: {detail.get('total_slices', len(slices))}")
+    if not slices:
+        st.warning("У пациента нет доступных срезов.")
+        return
+    show_mask = st.checkbox(
+        "Показать маску опухоли",
+        value=True,
+        key="case_show_mask_dialog",
+    )
+    render_live_slice_viewer(str(patient_id), slices, show_mask=show_mask)
 
 
 def render_upload_form(cookie_manager: stx.CookieManager) -> None:
@@ -666,7 +1016,7 @@ def render_upload_form(cookie_manager: stx.CookieManager) -> None:
 
     st.subheader("Загрузка МРТ")
     uploaded = st.file_uploader(
-        "ZIP со срезами одного пациента (рекомендуется) или одно изображение МРТ",
+        "ZIP со срезами одного пациента или одно изображение МРТ",
         type=["zip", "tif", "tiff", "png", "jpg", "jpeg", "bmp"],
     )
     if uploaded is not None:
@@ -686,7 +1036,7 @@ def render_upload_form(cookie_manager: stx.CookieManager) -> None:
             st.error(str(exc))
 
 
-def render_task_result(task_id: int) -> None:
+def render_task_result(cookie_manager: stx.CookieManager, task_id: int) -> None:
     st.subheader("Результат")
     status_box = st.empty()
 
@@ -695,6 +1045,13 @@ def render_task_result(task_id: int) -> None:
     for _ in range(180):
         try:
             task = get_task(task_id)
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                start_new_patient(cookie_manager)
+                st.rerun()
+                return
+            status_box.error(f"Ошибка получения статуса: {exc}")
+            return
         except Exception as exc:
             status_box.error(f"Ошибка получения статуса: {exc}")
             return
@@ -720,7 +1077,7 @@ def render_task_result(task_id: int) -> None:
     if meta_bits:
         st.caption("Запрос: " + ", ".join(meta_bits))
 
-    gallery = parse_slice_gallery(task.get("slice_gallery"))
+    gallery = parse_json_list(task.get("slice_gallery"))
     best = next((item for item in gallery if item.get("is_best")), None)
 
     st.markdown("**Лучший срез** (по максимальной площади опухоли)")
@@ -776,11 +1133,22 @@ def render_task_result(task_id: int) -> None:
                 except Exception as exc:
                     st.error(str(exc))
 
-    cases = parse_similar_cases(task.get("similarity_cases"))
+    cases = parse_json_list(task.get("similarity_cases"))
     st.subheader("Похожие клинические случаи")
     if not cases:
         st.write("Похожие случаи не найдены. Проверьте, что Qdrant проиндексирован.")
         return
+
+    render_similar_cases_fragment(cases, cookie_manager)
+
+
+@st.fragment
+def render_similar_cases_fragment(
+    cases: List[Dict[str, Any]],
+    cookie_manager: stx.CookieManager,
+) -> None:
+    if st.session_state.get("selected_patient_id"):
+        show_historical_case_dialog()
 
     for i, case in enumerate(cases, start=1):
         patient_id = case.get("patient_id")
@@ -818,9 +1186,8 @@ def render_task_result(task_id: int) -> None:
             "Подробнее",
             key=f"open_case_{i}_{patient_id}",
         ):
-            st.session_state.selected_patient_id = patient_id
-            st.session_state.selected_case_score = case.get("score")
-            st.rerun()
+            open_historical_case(cookie_manager, patient_id, case.get("score"))
+            show_historical_case_dialog()
         st.divider()
 
 
@@ -836,21 +1203,19 @@ def render_workspace(cookie_manager: stx.CookieManager) -> None:
     with top_cols[1]:
         if st.button("Выйти", use_container_width=True):
             clear_session(cookie_manager)
-            time.sleep(0.2)
             st.rerun()
+
+    if not st.session_state.access_token:
+        return
 
     render_history_sidebar(cookie_manager)
 
-    if st.session_state.selected_patient_id:
-        render_case_detail()
-        return
-
-    task_id = st.session_state.last_task_id
-    if not task_id:
+    if st.session_state.last_task_id:
+        render_task_result(cookie_manager, int(st.session_state.last_task_id))
+    elif st.session_state.selected_patient_id:
+        render_case_detail(cookie_manager)
+    else:
         render_upload_form(cookie_manager)
-        return
-
-    render_task_result(int(task_id))
 
 
 def main() -> None:
@@ -863,7 +1228,7 @@ def main() -> None:
     bootstrap_cookies(cookie_manager)
     restore_session_from_cookie(cookie_manager)
     if st.session_state.access_token and st.session_state.user_id:
-        restore_task_from_cookie(cookie_manager)
+        restore_workspace_view(cookie_manager)
 
     st.sidebar.title("MRI Segmentation")
 
