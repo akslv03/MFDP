@@ -33,7 +33,10 @@ def search_similar_cases(
     try:
         client = _client()
         if not client.collection_exists(COLLECTION_NAME):
-            logger.warning("Qdrant collection %s missing", COLLECTION_NAME)
+            logger.warning(
+                "Qdrant collection %s missing — индексация похожих случаев не выполнена",
+                COLLECTION_NAME,
+            )
             return json.dumps([])
 
         query_filter = None
@@ -56,7 +59,10 @@ def search_similar_cases(
         hits = list(response.points)
     except Exception as exc:
         logger.exception("Qdrant search failed: %s", exc)
-        return json.dumps([])
+        raise RuntimeError(
+            "Сервис поиска похожих случаев недоступен. "
+            "Проверьте, что Qdrant запущен и проиндексирован."
+        ) from exc
 
     def rerank_key(hit) -> tuple:
         payload = hit.payload or {}
@@ -81,10 +87,5 @@ def search_similar_cases(
             "patient_id": patient_id,
             "score": round(float(hit.score), 4),
         }
-        case["summary"] = (
-            f"histological_type={case.get('histological_type', '?')}, "
-            f"grade={case.get('grade', '?')}, "
-            f"location={case.get('location', '?')}"
-        )
         cases.append(case)
     return json.dumps(cases, ensure_ascii=False)

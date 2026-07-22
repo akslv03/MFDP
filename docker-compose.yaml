@@ -27,7 +27,17 @@ services:
     networks:
       - mri-segmentation-network
     healthcheck:
-      test: ["CMD", "uv", "run", "--project", "/svc", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      test:
+        [
+          "CMD",
+          "uv",
+          "run",
+          "--project",
+          "/svc",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')",
+        ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -73,6 +83,7 @@ services:
     platform: linux/arm64
     environment:
       - API_BASE_URL=http://app:8080
+      - BROWSER_API_BASE_URL=http://localhost:8080
     volumes:
       - ./webview:/svc/webview
     ports:

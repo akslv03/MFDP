@@ -20,19 +20,17 @@ from clinical_catalog import (
 )
 from mri_preprocessing import preprocess_volume
 from model_runtime import INFERENCE_SIZE, MASK_THRESHOLD, MRISegmentationService
-from volume_io import load_volume_from_paths
-
-
-def _slice_index(path: Path) -> int:
-    return int(path.name.split(".")[-2].split("_")[4])
+from volume_io import drop_edge_slices, list_mri_slice_paths, load_volume_from_paths
 
 
 def _load_patient_rgb_volume(patient_dir: Path):
-    files = sorted(patient_dir.glob("*.tif"), key=_slice_index)
-    image_paths = [fp for fp in files if "mask" not in fp.name]
-    if len(image_paths) < 3:
+    try:
+        all_paths = list_mri_slice_paths(patient_dir)
+    except (FileNotFoundError, ValueError):
         return None, []
-    kept = image_paths[1:-1]
+    if len(all_paths) < 3:
+        return None, []
+    kept = drop_edge_slices(all_paths)
     volume = load_volume_from_paths(kept)
     return volume, kept
 

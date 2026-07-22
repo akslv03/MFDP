@@ -26,7 +26,15 @@ BATCH_SIZE = 8
 
 WEIGHT_CANDIDATES = (
     "unet_transformer_finetuned_best.pt",
-    "unet_transformer_finetuned_best.pth"
+    "unet_transformer_finetuned_best.pth",
+    "unet_best.pt",
+    "unet_best.pth",
+    "best_model.pt",
+    "best_model.pth",
+    "model.pt",
+    "model.pth",
+    "checkpoint.pt",
+    "checkpoint.pth",
 )
 
 

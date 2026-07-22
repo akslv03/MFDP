@@ -17,5 +17,4 @@ app/.pytest_cache/
 *.pyc
 .python-version.bak
 kaggle_3m/
-*.pt
-*.pth
+.tools/

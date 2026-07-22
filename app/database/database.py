@@ -1,11 +1,7 @@
-from sqlalchemy import text
 from sqlmodel import SQLModel, Session, create_engine, select
-
 from auth.hash_password import HashPassword
 from models.ml_model import MLModel
-from models.ml_task import MLTask
 from models.user import User, UserRole
-
 from .config import get_settings
 
 
@@ -30,21 +26,6 @@ def get_session():
         yield session
 
 
-def ensure_schema(engine) -> None:
-    """Добавляет новые колонки, если база создана предыдущей версией MVP."""
-    statements = [
-        "ALTER TABLE ml_task ADD COLUMN IF NOT EXISTS display_image_path VARCHAR",
-        "ALTER TABLE ml_task ADD COLUMN IF NOT EXISTS slice_gallery VARCHAR",
-        "ALTER TABLE ml_task ADD COLUMN IF NOT EXISTS doctor_review VARCHAR DEFAULT 'pending'",
-    ]
-    with engine.begin() as conn:
-        for statement in statements:
-            try:
-                conn.execute(text(statement))
-            except Exception:
-                pass
-
-
 def init_db(drop_all: bool = False) -> None:
     try:
         engine = get_database_engine()
@@ -52,7 +33,6 @@ def init_db(drop_all: bool = False) -> None:
             SQLModel.metadata.drop_all(engine)
 
         SQLModel.metadata.create_all(engine)
-        ensure_schema(engine)
 
         with Session(engine) as session:
             hasher = HashPassword()

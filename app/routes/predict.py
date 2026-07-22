@@ -13,12 +13,13 @@ from services.crud import ml_task as TaskService
 from services.crud import user as UserService
 from services.rm.rm import send_task
 from sqlmodel import Session
+from volume_io import IMAGE_SUFFIXES
 
 logger = logging.getLogger(__name__)
 
 predict_route = APIRouter()
 
-SUPPORTED_EXTS = {".zip", ".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp"}
+SUPPORTED_EXTS = IMAGE_SUFFIXES | {".zip"}
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(200 * 1024 * 1024)))
 
 
