@@ -1,5 +1,5 @@
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from jose import jwt, JWTError
 
@@ -32,7 +32,9 @@ def verify_access_token(token: str) -> dict:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Токен доступа не передан",
             )
-        if datetime.utcnow() > datetime.utcfromtimestamp(expire):
+        now = datetime.now(timezone.utc)
+        expire_at = datetime.fromtimestamp(expire, tz=timezone.utc)
+        if now > expire_at:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Срок действия токена истек",

@@ -4,7 +4,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-MASK_THRESHOLD = 0.20
+MASK_THRESHOLD = 0.75
 
 
 def postprocess_mask(

@@ -1,29 +1,21 @@
 from __future__ import annotations
 import numpy as np
-from PIL import Image
+from skimage.transform import resize
 
 FOREGROUND_FRACTION = 0.1
 
 
-def _resize_slice(slice_hwc: np.ndarray, size: int) -> np.ndarray:
-    channels = []
-    for c in range(slice_hwc.shape[-1]):
-        img = Image.fromarray(slice_hwc[..., c].astype(np.float32), mode="F")
-        img = img.resize((size, size), resample=Image.BICUBIC)
-        channels.append(np.asarray(img, dtype=np.float32))
-    return np.stack(channels, axis=-1)
-
-
 def crop_volume(volume: np.ndarray) -> np.ndarray:
-    volume = volume.astype(np.float32).copy()
+    volume = volume.astype(np.float32)
     peak = float(volume.max()) if volume.size else 0.0
     if peak <= 0.0:
         return volume
 
-    volume[volume < peak * FOREGROUND_FRACTION] = 0.0
-    z_projection = volume.max(axis=(1, 2, 3))
-    y_projection = volume.max(axis=(0, 2, 3))
-    x_projection = volume.max(axis=(0, 1, 3))
+    probe = volume.copy()
+    probe[probe < peak * FOREGROUND_FRACTION] = 0.0
+    z_projection = probe.max(axis=(1, 2, 3))
+    y_projection = probe.max(axis=(0, 2, 3))
+    x_projection = probe.max(axis=(0, 1, 3))
 
     z_nz = np.nonzero(z_projection)[0]
     y_nz = np.nonzero(y_projection)[0]
@@ -53,8 +45,15 @@ def pad_volume(volume: np.ndarray) -> np.ndarray:
 
 
 def resize_volume(volume: np.ndarray, size: int) -> np.ndarray:
-    resized = [_resize_slice(volume[i], size) for i in range(volume.shape[0])]
-    return np.stack(resized, axis=0).astype(np.float32)
+    out_shape = (volume.shape[0], size, size, volume.shape[3])
+    return resize(
+        volume.astype(np.float32),
+        output_shape=out_shape,
+        order=2,
+        mode="constant",
+        cval=0,
+        anti_aliasing=False,
+    ).astype(np.float32)
 
 
 def normalize_volume(volume: np.ndarray) -> np.ndarray:

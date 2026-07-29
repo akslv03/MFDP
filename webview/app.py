@@ -16,7 +16,7 @@ import streamlit.components.v1 as components
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8080").rstrip("/")
 BROWSER_API_BASE_URL = os.getenv("BROWSER_API_BASE_URL", "http://localhost:8080").rstrip("/")
 DEFAULT_MODEL_ID = int(os.getenv("DEFAULT_ML_MODEL_ID", "1"))
-PASSWORD_MIN_LENGTH = 4
+PASSWORD_MIN_LENGTH = 8
 EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 AUTH_COOKIE_NAME = os.getenv("STREAMLIT_AUTH_COOKIE", "mri_access_token")
 TASK_COOKIE_NAME = "mri_last_task_id"
@@ -324,8 +324,10 @@ def restore_session_from_cookie(cookie_manager: stx.CookieManager) -> None:
     except requests.RequestException:
         return
 
-    if response.status_code != 200:
+    if response.status_code in (401, 403):
         clear_auth_cookie(cookie_manager)
+        return
+    if response.status_code != 200:
         return
 
     me = response.json()
@@ -1016,7 +1018,7 @@ def render_upload_form(cookie_manager: stx.CookieManager) -> None:
 
     st.subheader("Загрузка МРТ")
     uploaded = st.file_uploader(
-        "ZIP со срезами одного пациента или одно изображение МРТ",
+        "ZIP со срезами пациента",
         type=["zip", "tif", "tiff", "png", "jpg", "jpeg", "bmp"],
     )
     if uploaded is not None:
@@ -1036,38 +1038,83 @@ def render_upload_form(cookie_manager: stx.CookieManager) -> None:
             st.error(str(exc))
 
 
+_TERMINAL_TASK_STATUSES = frozenset({"completed", "failed"})
+
+
+def _fetch_task_or_handle(
+    cookie_manager: stx.CookieManager,
+    task_id: int,
+) -> Optional[Dict[str, Any]]:
+    try:
+        return get_task(task_id)
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 404:
+            start_new_patient(cookie_manager)
+            st.rerun()
+            return None
+        st.error(f"Ошибка получения статуса: {exc}")
+        return None
+    except Exception as exc:
+        st.error(f"Ошибка получения статуса: {exc}")
+        return None
+
+
+def _sorted_other_slices(
+    gallery: List[Dict[str, Any]],
+    *,
+    sort_by: str,
+) -> List[Dict[str, Any]]:
+    other = [item for item in gallery if not item.get("is_best")]
+    if sort_by == "index":
+        return sorted(
+            other,
+            key=lambda item: (
+                int(item["index"]) if item.get("index") is not None else 10**9,
+                str(item.get("name") or ""),
+            ),
+        )
+    return sorted(
+        other,
+        key=lambda item: (-float(item.get("tumor_area") or 0.0), str(item.get("name") or "")),
+    )
+
+
+@st.fragment(run_every=2)
+def render_task_pending_fragment(
+    cookie_manager: stx.CookieManager,
+    task_id: int,
+) -> None:
+    """Неблокирующий опрос статуса: не держит script run на time.sleep."""
+    task = _fetch_task_or_handle(cookie_manager, task_id)
+    if task is None:
+        return
+
+    status = task.get("status")
+    st.markdown(f"Статус: `{status}` · задача `№{task_id}`")
+    if status in _TERMINAL_TASK_STATUSES:
+        st.rerun()
+        return
+
+    st.info("Сегментация выполняется…")
+
+
 def render_task_result(cookie_manager: stx.CookieManager, task_id: int) -> None:
     st.subheader("Результат")
-    status_box = st.empty()
 
-    terminal = {"completed", "failed"}
-    task = None
-    for _ in range(180):
-        try:
-            task = get_task(task_id)
-        except requests.HTTPError as exc:
-            if exc.response is not None and exc.response.status_code == 404:
-                start_new_patient(cookie_manager)
-                st.rerun()
-                return
-            status_box.error(f"Ошибка получения статуса: {exc}")
-            return
-        except Exception as exc:
-            status_box.error(f"Ошибка получения статуса: {exc}")
-            return
-
-        status = task.get("status")
-        status_box.markdown(f"Статус: `{status}` · задача `№{task_id}`")
-        if status in terminal:
-            break
-        time.sleep(2)
-    else:
-        status_box.warning("Сегментация выполняется. Обновите страницу чуть позже.")
+    task = _fetch_task_or_handle(cookie_manager, task_id)
+    if task is None:
         return
 
-    if task.get("status") == "failed":
-        status_box.error(task.get("error_message") or "Сегментация не удалась")
+    status = task.get("status")
+    if status not in _TERMINAL_TASK_STATUSES:
+        render_task_pending_fragment(cookie_manager, task_id)
         return
+
+    if status == "failed":
+        st.error(task.get("error_message") or "Сегментация не удалась")
+        return
+
+    st.markdown(f"Статус: `{status}` · задача `№{task_id}`")
 
     meta_bits = []
     if task.get("patient_age") is not None:
@@ -1098,9 +1145,22 @@ def render_task_result(cookie_manager: stx.CookieManager, task_id: int) -> None:
     other_slices = [item for item in gallery if not item.get("is_best")]
     if other_slices:
         with st.expander(f"Еще срезы ({len(other_slices)})", expanded=False):
-            for item in other_slices:
+            sort_label = st.radio(
+                "Сортировка срезов",
+                options=(
+                    "По площади опухоли (убывание)",
+                    "По номеру среза (возрастание)",
+                ),
+                horizontal=True,
+                key=f"slice_sort_{task_id}",
+            )
+            sort_by = "index" if "номеру" in sort_label else "area"
+            for item in _sorted_other_slices(gallery, sort_by=sort_by):
+                index = item.get("index")
+                index_bit = f" · №{index}" if index is not None else ""
                 st.markdown(
-                    f"Срез `{item.get('name')}` · площадь опухоли `{item.get('tumor_area', 0):.0f}`"
+                    f"Срез `{item.get('name')}`{index_bit} · "
+                    f"площадь опухоли `{item.get('tumor_area', 0):.0f}`"
                 )
                 render_slice_triplet(
                     item.get("display_image_path"),

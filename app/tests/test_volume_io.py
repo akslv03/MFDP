@@ -1,7 +1,8 @@
 from pathlib import Path
 import zipfile
+import numpy as np
 import pytest
-from mri_preprocessing import preprocess_volume
+from mri_preprocessing import preprocess_volume, resize_volume
 from volume_io import (
     drop_edge_slices,
     extract_zip,
@@ -63,3 +64,23 @@ def test_prepare_volume_from_real_patient(tmp_path: Path):
     assert volume.shape[0] == len(kept)
     assert volume.shape[1:] == (160, 160, 3)
     assert 0.0 <= float(volume.min()) and float(volume.max()) <= 1.0 + 1e-5
+
+
+def test_resize_volume_matches_training_skimage():
+    """Prod resize must match training pipeline: skimage order=2."""
+    pytest.importorskip("skimage")
+    from skimage.transform import resize as sk_resize
+
+    rng = np.random.default_rng(0)
+    volume = rng.random((4, 48, 40, 3), dtype=np.float32)
+    got = resize_volume(volume, 32)
+    expected = sk_resize(
+        volume,
+        output_shape=(4, 32, 32, 3),
+        order=2,
+        mode="constant",
+        cval=0,
+        anti_aliasing=False,
+    ).astype(np.float32)
+    assert got.shape == (4, 32, 32, 3)
+    np.testing.assert_allclose(got, expected, rtol=0, atol=0)

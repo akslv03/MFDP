@@ -28,6 +28,7 @@ def get_session():
 
 def init_db(drop_all: bool = False) -> None:
     try:
+        settings = get_settings()
         engine = get_database_engine()
         if drop_all:
             SQLModel.metadata.drop_all(engine)
@@ -52,30 +53,30 @@ def init_db(drop_all: bool = False) -> None:
                 print("Создана ML-модель: brain_mri_unet")
 
             admin = session.exec(
-                select(User).where(User.email == "admin@mri.local")
+                select(User).where(User.email == settings.ADMIN_EMAIL)
             ).first()
             if not admin:
                 admin = User(
-                    username="AdminUser",
-                    email="admin@mri.local",
-                    password=hasher.create_hash("secure_admin_pass"),
+                    username=settings.ADMIN_USERNAME,
+                    email=settings.ADMIN_EMAIL,
+                    password=hasher.create_hash(settings.ADMIN_PASSWORD),
                     role=UserRole.ADMIN,
                 )
                 session.add(admin)
-                print("Создан демо-администратор.")
+                print(f"Создан демо-администратор: {settings.ADMIN_EMAIL}")
 
             demo_user = session.exec(
-                select(User).where(User.email == "demo@client.com")
+                select(User).where(User.email == settings.DEMO_EMAIL)
             ).first()
             if not demo_user:
                 demo_user = User(
-                    username="DemoClient",
-                    email="demo@client.com",
-                    password=hasher.create_hash("demo_password"),
+                    username=settings.DEMO_USERNAME,
+                    email=settings.DEMO_EMAIL,
+                    password=hasher.create_hash(settings.DEMO_PASSWORD),
                     role=UserRole.CLIENT,
                 )
                 session.add(demo_user)
-                print("Создан демо-пользователь: demo@client.com")
+                print(f"Создан демо-пользователь: {settings.DEMO_EMAIL}")
 
             session.commit()
             print("База данных успешно инициализирована.")
