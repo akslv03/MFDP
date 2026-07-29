@@ -7,7 +7,6 @@ services:
     image: mri-segmentation-api:latest
     container_name: mri-segmentation-api
     restart: unless-stopped
-    platform: linux/arm64
     env_file:
       - ./app/.env
     environment:
@@ -21,9 +20,12 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - database
-      - rabbitmq
-      - qdrant
+      database:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
     networks:
       - mri-segmentation-network
     healthcheck:
@@ -50,7 +52,6 @@ services:
       target: worker
     image: mri-segmentation-ml-worker:latest
     restart: unless-stopped
-    platform: linux/arm64
     env_file:
       - ./app/.env
     volumes:
@@ -61,7 +62,7 @@ services:
       rabbitmq:
         condition: service_healthy
       database:
-        condition: service_started
+        condition: service_healthy
       qdrant:
         condition: service_started
     environment:
@@ -71,7 +72,6 @@ services:
       - KAGGLE_3M_PATH=/data/kaggle_3m
     networks:
       - mri-segmentation-network
-
   streamlit:
     build:
       context: .
@@ -80,7 +80,6 @@ services:
     image: mri-segmentation-ui:latest
     container_name: mri-segmentation-ui
     restart: unless-stopped
-    platform: linux/arm64
     environment:
       - API_BASE_URL=http://app:8080
       - BROWSER_API_BASE_URL=http://localhost:8080
@@ -98,10 +97,8 @@ services:
     image: nginx:latest
     container_name: mri-segmentation-nginx
     restart: unless-stopped
-    platform: linux/arm64
     ports:
       - "80:80"
-      - "443:443"
     depends_on:
       - streamlit
       - app
@@ -114,7 +111,6 @@ services:
     image: rabbitmq:3-management
     container_name: mri-segmentation-rabbitmq
     restart: on-failure
-    platform: linux/arm64
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -132,13 +128,18 @@ services:
     image: postgres:16-alpine
     container_name: mri-segmentation-postgres
     restart: unless-stopped
-    platform: linux/arm64
     env_file:
       - ./.env
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     networks:
       - mri-segmentation-network
 
@@ -146,12 +147,28 @@ services:
     image: qdrant/qdrant:v1.15.5
     container_name: mri-segmentation-qdrant
     restart: unless-stopped
-    platform: linux/arm64
     ports:
       - "6333:6333"
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    networks:
+      - mri-segmentation-network
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.19.0
+    container_name: mri-segmentation-mlflow
+    restart: unless-stopped
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+    ports:
+      - "5001:5000"
+    volumes:
+      - mlflow_data:/mlflow
     networks:
       - mri-segmentation-network
 
@@ -164,3 +181,4 @@ volumes:
   rabbitmq_data:
   postgres_data:
   qdrant_data:
+  mlflow_data:
