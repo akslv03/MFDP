@@ -1,10 +1,11 @@
 [core]
     remote = yandex
 
-['remote "yandex"']
+[remote "yandex"]
     url = s3://mri-segmentation-dvc/weights
-    endpointurl = https://storage.yandexcloud.net
+    endpointurl = https://yandexcloud.net
     region = ru-central1
+    no_sign_request = true
 
-['remote "localremote"']
+[remote "localremote"]
     url = ../dvc-storage
