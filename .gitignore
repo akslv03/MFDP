@@ -18,3 +18,7 @@ app/.pytest_cache/
 .python-version.bak
 kaggle_3m/
 .tools/
+demo_zips/
+dvc-storage/
+.mplcache/
+mlruns/
