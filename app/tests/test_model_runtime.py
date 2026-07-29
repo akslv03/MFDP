@@ -12,7 +12,7 @@ def test_postprocess_removes_tiny_components():
     mask_prob[5:20, 5:20] = 0.9
     mask_prob[30, 30] = 0.95
 
-    result = postprocess_mask(mask_prob, threshold=0.20)
+    result = postprocess_mask(mask_prob, threshold=0.80)
 
     assert result[10, 10] == 1
     assert result[30, 30] == 0
@@ -50,14 +50,12 @@ def test_predict_rejects_unsupported_format(tmp_path):
     assert "изображение" in str(exc.value)
 
 
-def test_weights_file_is_present_for_mvp():
-    weights_path = os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "weights",
-        "unet_transformer_finetuned_best.pt",
-    )
-    assert os.path.isfile(weights_path)
+def test_weights_are_tracked_by_dvc():
+    """Сам .pt в git не лежит (DVC remote). В CI проверяем указатель."""
+    weights_dir = os.path.join(os.path.dirname(__file__), "..", "weights")
+    dvc_pointer = os.path.join(weights_dir, "unet_transformer_finetuned_best.pt.dvc")
+    weights_file = os.path.join(weights_dir, "unet_transformer_finetuned_best.pt")
+    assert os.path.isfile(dvc_pointer) or os.path.isfile(weights_file)
 
 
 def test_similarity_search_returns_json_list():

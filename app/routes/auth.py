@@ -17,7 +17,7 @@ auth_route = APIRouter()
 hash_password = HashPassword()
 settings = get_settings()
 
-PASSWORD_MIN_LENGTH = 4
+PASSWORD_MIN_LENGTH = 8
 
 
 def _validate_password_value(password: str) -> str:

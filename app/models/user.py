@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
 import re
 from pydantic import field_validator
@@ -10,6 +10,10 @@ if TYPE_CHECKING:
 
 EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 EMAIL_ERROR = "Укажите корректный email. Пример: name@example.com"
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def validate_email(email: str) -> str:
@@ -36,9 +40,9 @@ class User(SQLModel, table=True):
         min_length=5,
         max_length=255
     )
-    password: str = Field(..., min_length=4)
+    password: str = Field(..., min_length=8)
     role: UserRole = Field(default=UserRole.CLIENT)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utc_now)
 
     tasks: List["MLTask"] = Relationship(
         back_populates="user",

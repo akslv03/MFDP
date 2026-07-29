@@ -1,7 +1,7 @@
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from auth.authenticate import authenticate_cookie
 from database.database import get_session
@@ -128,7 +128,7 @@ def _enqueue_task(
             "patient_gender": gender,
         },
         "model": model.name,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     try:
         send_task(message)

@@ -98,9 +98,15 @@ class MRISegmentationService:
 
     def _load_state_dict(self, path: str):
         try:
-            payload = torch.load(path, map_location=self.device, weights_only=False)
+            payload = torch.load(path, map_location=self.device, weights_only=True)
         except TypeError:
             payload = torch.load(path, map_location=self.device)
+        except Exception:
+            logger.warning(
+                "weights_only=True failed for %s; falling back to weights_only=False",
+                path,
+            )
+            payload = torch.load(path, map_location=self.device, weights_only=False)
 
         if isinstance(payload, dict):
             for key in ("state_dict", "model_state_dict", "model"):
@@ -163,10 +169,13 @@ class MRISegmentationService:
             for start in range(0, tensor_nchw.shape[0], BATCH_SIZE):
                 batch = tensor_nchw[start : start + BATCH_SIZE]
                 pred = model(batch)
-                binary = (pred > MASK_THRESHOLD).float()
-                mask_weights.append(binary.sum(dim=[1, 2, 3]).cpu().numpy())
-                prob_chunks.append(pred.squeeze(1).cpu().numpy())
-                binary_chunks.append(binary.squeeze(1).cpu().numpy())
+                probs_np = pred.squeeze(1).cpu().numpy()
+                post = np.stack(
+                    [postprocess_mask(probs_np[i], threshold=MASK_THRESHOLD) for i in range(probs_np.shape[0])]
+                )
+                mask_weights.append(post.reshape(post.shape[0], -1).sum(axis=1).astype(np.float32))
+                prob_chunks.append(probs_np)
+                binary_chunks.append(post.astype(np.float32))
                 feats = model.encoder(batch)[-1]
                 pooled = F.adaptive_avg_pool2d(feats, (1, 1)).view(batch.size(0), -1)
                 emb_chunks.append(pooled.cpu().numpy())

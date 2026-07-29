@@ -22,6 +22,9 @@ os.environ.setdefault("RABBITMQ_USER", "guest")
 os.environ.setdefault("RABBITMQ_PASS", "guest")
 os.environ.setdefault("RABBITMQ_QUEUE_NAME", "ml_task_queue")
 
+os.environ.setdefault("ADMIN_PASSWORD", "test_admin_password")
+os.environ.setdefault("DEMO_PASSWORD", "test_demo_password")
+
 from api import app
 from database.database import get_session
 from models.ml_model import MLModel

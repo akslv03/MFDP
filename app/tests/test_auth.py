@@ -61,7 +61,7 @@ def test_signup_short_password(client):
 
     assert response.status_code == 422
     detail = response.json()["detail"]
-    assert "Пароль должен содержать не менее 4 символов" in detail
+    assert "Пароль должен содержать не менее 8 символов" in detail
 
 
 def test_signup_invalid_email(client):

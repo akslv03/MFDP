@@ -1,11 +1,15 @@
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
 
 if TYPE_CHECKING:
     from .user import User
     from .ml_model import MLModel
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class TaskStatus(str, enum.Enum):
     CREATED = "created"
@@ -38,7 +42,7 @@ class MLTask(SQLModel, table=True):
     slice_gallery: Optional[str] = Field(default=None)
     doctor_review: DoctorReview = Field(default=DoctorReview.PENDING)
     error_message: Optional[str] = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utc_now)
 
     user: "User" = Relationship(back_populates="tasks")
     ml_model: "MLModel" = Relationship(back_populates="tasks")

@@ -1,12 +1,15 @@
 import json
 import logging
+import time
 import uuid
 import pika
+from pika.exceptions import AMQPConnectionError, StreamLostError
 from database.config import get_settings
 from database.database import engine
 from models.ml_task import MLTask, TaskStatus
 from segmentation_task import do_task
 from sqlmodel import Session
+from sqlalchemy.exc import OperationalError
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -18,25 +21,44 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 worker_id = str(uuid.uuid4())[:8]
-logger.info(f"Worker ID: {worker_id}")
+logger.info("Worker ID: %s", worker_id)
 
-connection_params = pika.ConnectionParameters(
-    host=settings.RABBITMQ_HOST,
-    port=settings.RABBITMQ_PORT,
-    virtual_host="/",
-    credentials=pika.PlainCredentials(
-        username=settings.RABBITMQ_USER,
-        password=settings.RABBITMQ_PASS,
-    ),
-    heartbeat=0,
-    blocked_connection_timeout=None,
-)
+RECONNECT_DELAY_SEC = 5
 
-connection = pika.BlockingConnection(connection_params)
-channel = connection.channel()
-queue_name = settings.RABBITMQ_QUEUE_NAME
-channel.queue_declare(queue=queue_name, durable=True)
-channel.basic_qos(prefetch_count=1)
+
+def _connection_params() -> pika.ConnectionParameters:
+    return pika.ConnectionParameters(
+        host=settings.RABBITMQ_HOST,
+        port=settings.RABBITMQ_PORT,
+        virtual_host="/",
+        credentials=pika.PlainCredentials(
+            username=settings.RABBITMQ_USER,
+            password=settings.RABBITMQ_PASS,
+        ),
+        heartbeat=60,
+        blocked_connection_timeout=300,
+        connection_attempts=3,
+        retry_delay=2,
+    )
+
+
+def _wait_for_database(retries: int = 30, delay_sec: float = 2.0) -> None:
+    """Ждём готовности Postgres перед стартом consumer."""
+    for attempt in range(1, retries + 1):
+        try:
+            with Session(engine) as session:
+                session.connection()
+            logger.info("PostgreSQL is ready")
+            return
+        except OperationalError as exc:
+            logger.warning(
+                "PostgreSQL not ready (attempt %s/%s): %s",
+                attempt,
+                retries,
+                exc,
+            )
+            time.sleep(delay_sec)
+    raise RuntimeError("PostgreSQL did not become ready in time")
 
 
 def callback(ch, method, properties, body):
@@ -104,13 +126,16 @@ def callback(ch, method, properties, body):
         logger.exception("Error while processing message: %s", e)
 
         if task_id is not None:
-            with Session(engine) as session:
-                task = session.get(MLTask, task_id)
-                if task:
-                    task.status = TaskStatus.FAILED
-                    task.error_message = str(e)
-                    session.add(task)
-                    session.commit()
+            try:
+                with Session(engine) as session:
+                    task = session.get(MLTask, task_id)
+                    if task:
+                        task.status = TaskStatus.FAILED
+                        task.error_message = str(e)
+                        session.add(task)
+                        session.commit()
+            except Exception as db_error:
+                logger.error("Failed to mark task as FAILED: %s", db_error)
 
         try:
             if ch.is_open:
@@ -119,11 +144,37 @@ def callback(ch, method, properties, body):
             logger.error("Failed to ack message after error: %s", ack_error)
 
 
-channel.basic_consume(
-    queue=queue_name,
-    on_message_callback=callback,
-    auto_ack=False,
-)
+def run_consumer() -> None:
+    _wait_for_database()
+    queue_name = settings.RABBITMQ_QUEUE_NAME
 
-logger.info("Waiting for MRI segmentation tasks. To exit, press Ctrl+C")
-channel.start_consuming()
+    while True:
+        connection = None
+        try:
+            connection = pika.BlockingConnection(_connection_params())
+            channel = connection.channel()
+            channel.queue_declare(queue=queue_name, durable=True)
+            channel.basic_qos(prefetch_count=1)
+            channel.basic_consume(
+                queue=queue_name,
+                on_message_callback=callback,
+                auto_ack=False,
+            )
+            logger.info("Waiting for MRI segmentation tasks. To exit, press Ctrl+C")
+            channel.start_consuming()
+        except (AMQPConnectionError, StreamLostError, OSError) as exc:
+            logger.error("RabbitMQ connection lost: %s. Reconnect in %ss", exc, RECONNECT_DELAY_SEC)
+            time.sleep(RECONNECT_DELAY_SEC)
+        except KeyboardInterrupt:
+            logger.info("Worker stopped by user")
+            break
+        finally:
+            if connection is not None and connection.is_open:
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+
+
+if __name__ == "__main__":
+    run_consumer()
