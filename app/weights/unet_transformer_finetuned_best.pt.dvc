@@ -1,0 +1,5 @@
+outs:
+- md5: 025cd5e0336b70e20feb08b9476093c9
+  size: 110038619
+  hash: md5
+  path: unet_transformer_finetuned_best.pt
