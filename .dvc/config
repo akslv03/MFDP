@@ -3,9 +3,5 @@
 
 [remote "yandex"]
     url = s3://mri-segmentation-dvc/weights
-    endpointurl = https://yandexcloud.net
+    endpointurl = https://storage.yandexcloud.net
     region = ru-central1
-    allow_anonymous = true
-
-[remote "localremote"]
-    url = ../dvc-storage
