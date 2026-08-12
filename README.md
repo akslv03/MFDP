@@ -68,7 +68,7 @@
 - `scripts/download_dataset.py` — скачивание датасета с Kaggle;
 - `scripts/ingest_similar_cases.py` — индексация train-пациентов в Qdrant;
 - `kaggle_3m` — датасет (не в git, качается скриптом);
-- `app/weights` — веса модели (DVC + Yandex Object Storage);
+- `app/weights` — веса модели (Git LFS);
 - `.github/workflows/ci.yml` — CI на pytest;
 - MLflow Tracking — сервис в Docker Compose (порт 5001).
 
@@ -77,13 +77,13 @@
 Нужны:
 
 - [uv](https://docs.astral.sh/uv/): `brew install uv`;
-- DVC ставится вместе с ML-зависимостями: `uv sync --group ml`.
+- [Git LFS](https://git-lfs.com/): `brew install git-lfs && git lfs install` (веса модели ~105 МБ).
 
 ```bash
 git clone git@github.com:akslv03/MFDP.git && cd MFDP
+git lfs pull
 uv sync --all-groups && source .venv/bin/activate
 python scripts/download_dataset.py
-uv run --group ml dvc pull
 cp .env.example .env && cp app/.env.example app/.env
 docker compose up --build -d
 python scripts/ingest_similar_cases.py
@@ -122,8 +122,7 @@ python scripts/ingest_similar_cases.py
 - `KAGGLE_3M_PATH` — путь к датасету;
 - `UPLOAD_DIR` и `MAX_UPLOAD_BYTES` — папка для загрузок и лимит размера файла;
 - `STREAMLIT_PUBLIC_URL` — публичный адрес UI, куда редиректит корневой маршрут;
-- `MLFLOW_TRACKING_URI` — адрес MLflow Tracking (по умолчанию `http://localhost:5001`);
-- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` — статический ключ к Yandex Object Storage для `dvc pull` / `dvc push`.
+- `MLFLOW_TRACKING_URI` — адрес MLflow Tracking (по умолчанию `http://localhost:5001`).
 
 ## MLOps
 
@@ -131,14 +130,13 @@ python scripts/ingest_similar_cases.py
 | --- | --- |
 | **GitHub Actions** | CI: `uv sync --group dev` + `pytest` на push/PR |
 | **Docker Compose** | Локальный контур сервиса одной командой |
-| **DVC + Yandex Object Storage** | Версионирование весов `app/weights/*.pt` в S3-совместимом remote |
+| **Git LFS** | Хранение весов `app/weights/*.pt` (~105 МБ) рядом с кодом |
 | **MLflow** | Трекинг экспериментов сравнения моделей (CV Dice) |
 | **pytest** | Регрессии API, preprocessing, сплитов, постобработки |
 
-### DVC remote (Yandex Object Storage)
+### Веса модели (Git LFS)
 
-В git лежит только указатель `.dvc` и конфиг. Сами веса — в бакете Object Storage.
-
+Файл `app/weights/unet_transformer_finetuned_best.pt` версионируется через Git LFS. После клона выполните `git lfs pull`, если веса не подтянулись автоматически.
 
 ### MLflow
 
