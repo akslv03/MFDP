@@ -50,12 +50,19 @@ def test_predict_rejects_unsupported_format(tmp_path):
     assert "изображение" in str(exc.value)
 
 
-def test_weights_are_tracked_by_dvc():
-    """Сам .pt в git не лежит (DVC remote). В CI проверяем указатель."""
-    weights_dir = os.path.join(os.path.dirname(__file__), "..", "weights")
-    dvc_pointer = os.path.join(weights_dir, "unet_transformer_finetuned_best.pt.dvc")
-    weights_file = os.path.join(weights_dir, "unet_transformer_finetuned_best.pt")
-    assert os.path.isfile(dvc_pointer) or os.path.isfile(weights_file)
+def test_weights_are_tracked_by_git_lfs():
+    """Веса лежат в Git LFS; в CI достаточно pointer-файла или реального .pt."""
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    weights_file = os.path.join(
+        repo_root, "app", "weights", "unet_transformer_finetuned_best.pt"
+    )
+    gitattributes = os.path.join(repo_root, ".gitattributes")
+    assert os.path.isfile(weights_file)
+    assert os.path.isfile(gitattributes)
+    with open(gitattributes, encoding="utf-8") as f:
+        attrs = f.read()
+    assert "app/weights/*.pt" in attrs
+    assert "filter=lfs" in attrs
 
 
 def test_similarity_search_returns_json_list():
